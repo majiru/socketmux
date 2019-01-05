@@ -16,8 +16,8 @@ typedef int (*sockhandler)(int, struct sockaddr*, socklen_t);
 typedef struct Server Server;
 
 struct Server{
-	int 			sock;
-	sockhandler 	handler;
+	int			sock;
+	sockhandler	handler;
 };
 
 int
@@ -83,6 +83,23 @@ handleshell(int fd, struct sockaddr *addr, socklen_t size)
 	return 0;
 }
 
+void
+httprespond(FILE* f, int code)
+{
+	fprintf(f, 
+		"HTTP/1.1 %d \r\n"
+		"Server: Bank2Node \r\n"
+		"Content-type: text/plain \r\n\r\n", code);
+	switch(code){
+		case 404:
+			fprintf(f, "%s\r\n", "Page not found...");
+			break;
+		case 500:
+			fprintf(f, "%s\r\n", "Internal server error...");
+			break;
+	}
+}
+
 int
 handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 {
@@ -91,6 +108,7 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	time_t clock;
 	line = NULL;
 	request = NULL;
+	int ispost = 0;
 
 	size_t linesize = 0;
 	ssize_t linelen;
@@ -110,10 +128,12 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 		case 'P':
 			/* Probably POST */
 			request += 5;
+			ispost++;
 			break;
 	}
 	if(!request){
-		fprintf(stdout, "Wasn't POST/GET or no file.\n");
+		httprespond(sock, 500);
+		close(fd);
 		return 1;
 	}
 	fprintf(stdout, "Request: %s\n", request);
@@ -124,17 +144,50 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	temp = malloc(linelen);
 	snprintf(temp, linelen, ".%s", request);
 	temp[linelen-1] = '\0';
+
+	/* CGI Variables */
+	char *query = strstr(temp, "?");
+	if(query){
+		*query = '\0';
+		query++;
+	}
 	
 	clock = time(NULL);
-	fprintf(stdout, "requested %s @ %s\n", temp, ctime(&clock));
-	if(!fork()){
-		dup2(fd, 2);
-		dup2(fd, 1);
-		dup2(fd, 0);
-		execlp(temp, NULL, NULL);
-		free(request);
-		free(temp);
+	fprintf(stdout, "requested %s @ %s", temp, ctime(&clock));
+	if(access(temp, F_OK) == -1){
+		httprespond(sock, 404);
+		close(fd);
+		return 1;
 	}
+
+	int cgipipe[2];
+	pipe(cgipipe);
+
+	if(fork()){
+		close(cgipipe[1]);
+		if(ispost){
+			FILE *postfd = fdopen(cgipipe[0], "w");
+			linesize = 0;
+			while((linelen = getdelim(&line, &linesize, '\r', sock)) > 0){
+				fwrite(line,linelen, 1, postfd);
+				fprintf(stdout, "%s\n", line);
+			}
+			fclose(postfd);
+		}
+		fclose(sock);
+		close(fd);
+		close(cgipipe[0]);
+		return 0;
+	}
+	
+	close(cgipipe[0]);
+	dup2(fd, 2);
+	dup2(fd, 1);
+	dup2(cgipipe[1], 0);
+	execlp(temp, NULL, NULL);
+	close(cgipipe[1]);
+	free(request);
+	free(temp);
 	return 0;
 }
 
