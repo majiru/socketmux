@@ -150,6 +150,7 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	if(query){
 		*query = '\0';
 		query++;
+		setenv("QUERY_STRING", query, 1);
 	}
 	
 	clock = time(NULL);
