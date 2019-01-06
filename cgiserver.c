@@ -165,6 +165,8 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	snprintf(request, requestsize, ".%s", headervals[0]);
 
 	/* CGI Variables */
+	unsetenv("VERB");
+	setenv("VERB", verb, 1);
 	unsetenv("QUERY_STRING");
 	char *query = strstr(request, "?");
 	if(query){
@@ -172,6 +174,7 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 		query++;
 		setenv("QUERY_STRING", query, 1);
 	}
+
 
 	if(access(request, F_OK) == -1){
 		httprespond(sock, 404);
