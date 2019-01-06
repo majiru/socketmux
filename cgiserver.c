@@ -1,5 +1,3 @@
-#define _WITH_GETLINE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -25,7 +23,7 @@ int
 setupsock(int port)
 {
 	int sock;
-	
+
 	struct sockaddr_in sin;
 	sock				= 	socket(AF_INET, SOCK_STREAM, 0);
 	sin.sin_family 		=	AF_INET;
@@ -39,7 +37,7 @@ setupsock(int port)
 		close(sock);
 		return -1;
 	}
-	
+
 	/* Bind */
 	if(bind(sock, (struct sockaddr *)&sin, sizeof(sin)) < 0){
 		fprintf(stderr, "Failed to bind to port %d!\n", port);
@@ -85,7 +83,7 @@ handleshell(int fd, struct sockaddr *addr, socklen_t size)
 void
 httprespond(FILE* f, int code)
 {
-	fprintf(f, 
+	fprintf(f,
 		"HTTP/1.1 %d \r\n"
 		"Server: Bank2Node \r\n"
 		"Content-type: text/plain \r\n\r\n", code);
@@ -204,13 +202,13 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 				write(cgipipe[0], buf, read);
 			}
 		}
-	
+
 		close(cgipipe[0]);
 		fclose(sock);
 		close(fd);
 		return 0;
 	}
-	
+
 	dup2(fd, 2);
 	dup2(fd, 1);
 	dup2(cgipipe[1], 0);
@@ -239,7 +237,7 @@ main(int argc, char **argv)
 	while(1){
 		Server s;
 		int i, fd;
-		struct sockaddr *addr;
+		struct sockaddr *addr = NULL;
 		socklen_t size = 0;
 
 		i = servermux(services, 2);
