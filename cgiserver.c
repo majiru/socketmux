@@ -215,6 +215,10 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	close(cgipipe[1]);
 	close(cgipipe[0]);
 	execlp(request, request, NULL);
+	for(i = 0; i < headerelem; i++){
+		free(headerkeys[i]);
+		free(headervals[i]);
+	}
 	free(request);
 	fclose(sock);
 	exit(0);
