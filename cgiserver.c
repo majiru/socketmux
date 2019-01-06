@@ -10,7 +10,8 @@
 #include <string.h>
 #include <time.h>
 
-#define HEADER_SIZE 10240L
+#define HEADER_SIZE 1024L
+#define NUM_HEADER_MAX 10
 
 typedef int (*sockhandler)(int, struct sockaddr*, socklen_t);
 typedef struct Server Server;
@@ -74,12 +75,10 @@ servermux(Server s[], int n)
 int
 handleshell(int fd, struct sockaddr *addr, socklen_t size)
 {
-	if(fork())
-		return 0;
 	dup2(fd, 2);
 	dup2(fd, 1);
 	dup2(fd, 0);
-	execlp("/bin/sh", NULL, NULL);
+	execlp("/bin/sh", "sh", NULL);
 	return 0;
 }
 
@@ -101,95 +100,126 @@ httprespond(FILE* f, int code)
 }
 
 int
+readheader(FILE* sock, char **keys, char **vals)
+{
+	int numelem = 0;
+	char buf[HEADER_SIZE];
+	while(!feof(sock)){
+		/* read in and break on error / empty line */
+		char *in = fgets(buf, HEADER_SIZE - 2 , sock);
+		if(!in || !strcmp(in, "\r\n") || !strcmp(in, "\n"))
+			break;
+
+		char *temp = strstr(in, ":");
+		if(temp){
+			*temp = '\0';
+			temp = temp + 2;
+		}else{
+			temp = strstr(in, "/");
+			if(temp){
+				temp[-1] = '\0';
+				char  *s = strstr(temp, "HTTP");
+				if(s)
+					*s = '\0';
+			}
+			else
+				continue;
+		}
+
+		size_t size;
+		size = (strlen(in)+2) * sizeof(char);
+		keys[numelem] = malloc(size);
+		snprintf(keys[numelem], size, "%s", in);
+		size = (strlen(temp)+1) * sizeof(char);
+		vals[numelem] = malloc(size);
+		snprintf(vals[numelem++], size, "%s", temp);
+	}
+	return numelem;
+}
+
+
+int
 handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 {
 	FILE *sock = NULL;
-	char *line, *request;
+	char *request, *verb;
 	time_t clock;
-	line = NULL;
-	request = NULL;
-	int ispost = 0;
-
-	size_t linesize = 0;
-	ssize_t linelen;
+	int headerelem, i;
 
 	sock = fdopen(fd, "r+");
 	if(!sock)
 		perror(NULL);
-	if((linelen = getline(&line, &linesize, sock)) == -1)
-		perror(NULL);
-	request = malloc(linelen);
-	strlcpy(request, line, linelen);
-	switch(request[0]){
-		case 'G':
-			/* Probably GET */
-			request += 4;
-			break;
-		case 'P':
-			/* Probably POST */
-			request += 5;
-			ispost++;
-			break;
-	}
-	if(!request){
+
+	char *headerkeys[NUM_HEADER_MAX];
+	char *headervals[NUM_HEADER_MAX];
+	headerelem = readheader(sock, headerkeys, headervals);
+
+	verb = headerkeys[0];
+	if(!(strstr(verb, "GET") || strstr(verb, "POST"))){
 		httprespond(sock, 500);
+		fclose(sock);
 		close(fd);
 		return 1;
 	}
-	fprintf(stdout, "Request: %s\n", request);
-	/* string bullshit to get ./filename*/
-	char *temp;
-	temp = strstr(request, "HTTP");
-	temp[-1] = '\0';
-	temp = malloc(linelen);
-	snprintf(temp, linelen, ".%s", request);
-	temp[linelen-1] = '\0';
+
+	size_t requestsize = (strlen(headervals[0])+1) * sizeof(char);
+	request = malloc(requestsize);
+	snprintf(request, requestsize, ".%s", headervals[0]);
 
 	/* CGI Variables */
-	char *query = strstr(temp, "?");
+	unsetenv("QUERY_STRING");
+	char *query = strstr(request, "?");
 	if(query){
 		*query = '\0';
 		query++;
 		setenv("QUERY_STRING", query, 1);
 	}
-	
-	clock = time(NULL);
-	fprintf(stdout, "requested %s @ %s", temp, ctime(&clock));
-	if(access(temp, F_OK) == -1){
+
+	if(access(request, F_OK) == -1){
 		httprespond(sock, 404);
+		fclose(sock);
 		close(fd);
 		return 1;
 	}
+	clock = time(NULL);
+	fprintf(stdout, "%s %s @ %s", verb, request, ctime(&clock));
+
 
 	int cgipipe[2];
 	pipe(cgipipe);
-
-	if(fork()){
+	if(fork() == 0){
 		close(cgipipe[1]);
-		if(ispost){
-			FILE *postfd = fdopen(cgipipe[0], "w");
-			linesize = 0;
-			while((linelen = getdelim(&line, &linesize, '\r', sock)) > 0){
-				fwrite(line,linelen, 1, postfd);
-				fprintf(stdout, "%s\n", line);
+		if(strcmp(verb, "POST") == 0){
+			int contentlength = 0;
+			size_t totalread = 0;
+			for(i = 0; i < headerelem; i++){
+				if(strcmp(headerkeys[i], "Content-Length") == 0)
+					contentlength = atoi(headervals[i]);
 			}
-			fclose(postfd);
+			char buf[1024];
+			while(!feof(sock) && contentlength > totalread){
+				size_t diff = contentlength - totalread;
+				size_t read = fread(buf, 1, diff, sock);
+				totalread += read;
+				write(cgipipe[0], buf, read);
+			}
 		}
+	
+		close(cgipipe[0]);
 		fclose(sock);
 		close(fd);
-		close(cgipipe[0]);
 		return 0;
 	}
 	
-	close(cgipipe[0]);
 	dup2(fd, 2);
 	dup2(fd, 1);
 	dup2(cgipipe[1], 0);
-	execlp(temp, NULL, NULL);
 	close(cgipipe[1]);
+	close(cgipipe[0]);
+	execlp(request, request, NULL);
 	free(request);
-	free(temp);
-	return 0;
+	fclose(sock);
+	exit(0);
 }
 
 int
@@ -217,9 +247,10 @@ main(int argc, char **argv)
 			continue;
 		s = services[i];
 		fd = accept(s.sock, addr, &size);
-		if(!fork())
+		if(!fork()){
 			s.handler(fd, addr, size);
-		else
+			exit(0);
+		}else
 			close(fd);
 	}
 	return 0;
