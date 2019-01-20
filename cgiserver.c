@@ -135,6 +135,39 @@ readheader(FILE* sock, char **keys, char **vals)
 	return numelem;
 }
 
+int
+countandformat(int in, int o)
+{
+	int size = 0;
+	FILE *input = fdopen(in, "r");
+	FILE *out = fdopen(o, "r+");
+	char buf[HEADER_SIZE];
+	char totalbuffer[5096];
+	while(!feof(input)){
+		char *in = fgets(buf, HEADER_SIZE - 2, input);
+		if(!in)
+			break;
+		snprintf(totalbuffer, 5096, "%s%s", totalbuffer, buf);
+		size += strlen(buf);
+	}
+	fclose(input);
+	close(in);
+	if(size == 0){
+		httprespond(out, 500);
+		fclose(out);
+		close(o);
+		return 1;
+	}
+	fwrite("HTTP/1.1 200\r\n", 14, 1, out);
+	fwrite("Content-type: text/plain\r\n", 26, 1, out);
+	bzero(buf, HEADER_SIZE);
+	snprintf(buf, HEADER_SIZE - 2, "Content-length: %d\r\n\r\n", size);
+
+	fwrite(buf, strlen(buf) * sizeof(char), 1, out);
+	fwrite(totalbuffer, size * sizeof(char), 1, out);
+	fclose(out);
+	close(o);
+}
 
 int
 handlecgi(int fd, struct sockaddr *addr, socklen_t size)
@@ -212,11 +245,23 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 		return 0;
 	}
 
-	dup2(fd, 2);
-	dup2(fd, 1);
+	int outpipe[2];
+	pipe(outpipe);
+	if(fork() == 0){
+		close(outpipe[1]);
+		countandformat(outpipe[0], fd);
+		close(outpipe[0]);
+		fclose(sock);
+		close(fd);
+		return 0;
+	}
+
+	dup2(outpipe[1], 1);
 	dup2(cgipipe[1], 0);
 	close(cgipipe[1]);
 	close(cgipipe[0]);
+	close(outpipe[0]);
+	close(outpipe[1]);
 	execlp(request, request, NULL);
 	for(i = 0; i < headerelem; i++){
 		free(headerkeys[i]);
@@ -224,7 +269,7 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	}
 	free(request);
 	fclose(sock);
-	exit(0);
+	return 0;
 }
 
 int
