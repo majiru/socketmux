@@ -167,6 +167,7 @@ countandformat(int in, int o)
 	fwrite(totalbuffer, size * sizeof(char), 1, out);
 	fclose(out);
 	close(o);
+	return 0;
 }
 
 int
@@ -208,7 +209,6 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 		setenv("QUERY_STRING", query, 1);
 	}
 
-
 	if(access(request, F_OK) == -1){
 		httprespond(sock, 404);
 		fclose(sock);
@@ -217,7 +217,6 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	}
 	clock = time(NULL);
 	fprintf(stdout, "%s %s @ %s", verb, request, ctime(&clock));
-
 
 	int cgipipe[2];
 	pipe(cgipipe);
@@ -248,6 +247,8 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	int outpipe[2];
 	pipe(outpipe);
 	if(fork() == 0){
+		close(cgipipe[0]);
+		close(cgipipe[1]);
 		close(outpipe[1]);
 		countandformat(outpipe[0], fd);
 		close(outpipe[0]);
