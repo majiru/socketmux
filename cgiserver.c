@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/select.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 #define HEADER_SIZE 1024L
@@ -187,7 +188,7 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	headerelem = readheader(sock, headerkeys, headervals);
 
 	verb = headerkeys[0];
-	if(!(strstr(verb, "GET") || strstr(verb, "POST"))){
+	if(!(strstr(verb, "GET") || strstr(verb, "POST") || strstr(verb, "DELETE"))){
 		httprespond(sock, 500);
 		fclose(sock);
 		close(fd);
@@ -226,7 +227,7 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 			int contentlength = 0;
 			size_t totalread = 0;
 			for(i = 0; i < headerelem; i++){
-				if(strcmp(headerkeys[i], "Content-Length") == 0)
+				if(strcasecmp(headerkeys[i], "Content-Length") == 0)
 					contentlength = atoi(headervals[i]);
 			}
 			char buf[1024];
