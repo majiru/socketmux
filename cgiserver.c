@@ -26,7 +26,7 @@ setupsock(int port)
 	int sock;
 
 	struct sockaddr_in sin;
-	sock				= 	socket(AF_INET, SOCK_STREAM, 0);
+	sock			= 	socket(AF_INET, SOCK_STREAM, 0);
 	sin.sin_family 		=	AF_INET;
 	sin.sin_port		=	htons(port);
 	sin.sin_addr.s_addr	=	INADDR_ANY;
