@@ -1,0 +1,22 @@
+.\" x-roff document
+.do mso man.tmac
+.TH Socketmux 1 2019-1-21
+.PP
+.SH NAME
+Socketmux
+.PP
+.SH SYNOPSIS
+socketmux [port]
+.PP
+.SH DESCRIPTION
+This project is a simple proof of concept for plugable services in a single binary.
+.PP
+.SS SERVICES
+.TP
+\fBCGI
+\fRSocketmux starts a CGI handler on port, defaulted to 8080.
+.PP
+.TP
+\fBAdmin Console
+\fRSocketmux starts a telnet console on port 8080.
+.PP
