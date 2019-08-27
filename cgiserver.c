@@ -10,6 +10,7 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <sys/wait.h>
 
 #define HEADER_SIZE 1024L
 #define NUM_HEADER_MAX 10
@@ -180,6 +181,7 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	char *request, *verb;
 	time_t clock;
 	int headerelem, i;
+	int pid;
 
 	sock = fdopen(fd, "r+");
 	if(!sock)
@@ -223,7 +225,7 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 
 	int cgipipe[2];
 	pipe(cgipipe);
-	if(fork() == 0){
+	if((pid = fork()) == 0){
 		close(cgipipe[1]);
 		if(strcmp(verb, "POST") == 0){
 			int contentlength = 0;
@@ -244,12 +246,11 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 		close(cgipipe[0]);
 		fclose(sock);
 		close(fd);
-		return 0;
+		exit(0);
 	}
-
 	int outpipe[2];
 	pipe(outpipe);
-	if(fork() == 0){
+	if((pid = fork()) == 0){
 		close(cgipipe[0]);
 		close(cgipipe[1]);
 		close(outpipe[1]);
@@ -257,7 +258,7 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 		close(outpipe[0]);
 		fclose(sock);
 		close(fd);
-		return 0;
+		exit(0);
 	}
 
 	dup2(outpipe[1], 1);
@@ -266,11 +267,12 @@ handlecgi(int fd, struct sockaddr *addr, socklen_t size)
 	close(cgipipe[0]);
 	close(outpipe[0]);
 	close(outpipe[1]);
-	execlp(request, request, NULL);
 	for(i = 0; i < headerelem; i++){
 		free(headerkeys[i]);
 		free(headervals[i]);
 	}
+	/* TODO: Memory leak */
+	execlp(request, request, NULL);
 	free(request);
 	fclose(sock);
 	return 0;
@@ -293,6 +295,7 @@ main(int argc, char **argv)
 	while(1){
 		Server s;
 		int i, fd;
+		int pid;
 		struct sockaddr *addr = NULL;
 		socklen_t size = 0;
 
@@ -301,11 +304,14 @@ main(int argc, char **argv)
 			continue;
 		s = services[i];
 		fd = accept(s.sock, addr, &size);
-		if(!fork()){
+		if((pid = fork()) == 0){
 			s.handler(fd, addr, size);
 			exit(0);
-		}else
+		}else{
+			/* This lets the child actually exit and not leak PIDs */
+			signal(SIGCHLD,SIG_IGN);
 			close(fd);
+		}
 	}
 	return 0;
 }
