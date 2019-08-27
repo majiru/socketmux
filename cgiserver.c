@@ -10,6 +10,7 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <signal.h>
 #include <sys/wait.h>
 
 #define HEADER_SIZE 1024L
